@@ -29,7 +29,6 @@ MIN_REQUEST_INTERVAL_SECONDS = 1.0
 AUTHOR_ID_OVERRIDES = {"Liu Cixin": "OL7044246A"}
 
 log = logging.getLogger(__name__)
-_enabled = True
 _cache: dict[str, tuple[float, AuthorInfo | None]] = {}
 _cache_lock = threading.RLock()
 _request_lock = threading.Lock()
@@ -145,18 +144,15 @@ def _build_author(author_name: str, author_id: str, record: dict[str, Any]) -> A
 
 
 def connect(key: str | None = None, enabled: bool = True) -> None:
-    """Keep Calibre-Web's startup interface; Open Library requires no API key."""
-    global _enabled
-    # ``key`` is accepted for drop-in compatibility and deliberately ignored.
-    _enabled = bool(enabled)
-    if not _enabled:
-        with _cache_lock:
-            _cache.clear()
+    """Keep Calibre-Web's startup interface; Open Library is always enabled."""
+    # Both legacy Goodreads arguments are accepted and deliberately ignored.
+    # The caller may still gate whether it invokes this module at all.
+    return None
 
 
 def get_author_info(author_name: str) -> AuthorInfo | None:
     """Return exact-match author profile data, or None on misses/errors."""
-    if not _enabled or not isinstance(author_name, str) or not author_name.strip():
+    if not isinstance(author_name, str) or not author_name.strip():
         return None
 
     cache_key = _normalize_name(author_name)

@@ -89,10 +89,17 @@ def test_liu_cixin_uses_owner_supplied_record_id(monkeypatch) -> None:
     assert author.image_url is None
 
 
-def test_no_api_key_required_but_disabled_provider_is_inert(monkeypatch) -> None:
-    monkeypatch.setattr(provider, "_get_json", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("request made")))
+def test_provider_ignores_legacy_key_and_enabled_arguments(monkeypatch) -> None:
+    def fake_get_json(path, params=None):
+        if path.startswith("/search/"):
+            return {"docs": [{"key": "/authors/OL123A", "name": "Isaac Asimov"}]}
+        return {"name": "Isaac Asimov"}
+
+    monkeypatch.setattr(provider, "_get_json", fake_get_json)
     provider.connect(key=None, enabled=False)
-    assert provider.get_author_info("Isaac Asimov") is None
+    author = provider.get_author_info("Isaac Asimov")
+    assert author is not None
+    assert author.name == "Isaac Asimov"
 
 
 def test_request_errors_fail_closed(monkeypatch) -> None:

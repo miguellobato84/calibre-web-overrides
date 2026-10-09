@@ -12,7 +12,7 @@ Requests identify this provider with a User-Agent, are throttled to at most one 
 
 ## Drop-in use
 
-Replace the deployed Calibre-Web file `cps/services/goodreads_support.py` with `src/calibre_web_overrides/goodreads_support.py`. Calibre-Web must have `requests` installed (it is one of Calibre-Web's existing runtime dependencies). Its existing `config_use_goodreads` setting still gates the author-profile lookup route; enable that setting for the web handler to call the replacement. `connect` accepts the legacy key parameter but does not use it.
+Replace the deployed Calibre-Web file `cps/services/goodreads_support.py` with `src/calibre_web_overrides/goodreads_support.py`. Calibre-Web must have `requests` installed (it is one of Calibre-Web's existing runtime dependencies). The module always enables Open Library lookups: `connect` accepts the legacy `key` and `enabled` parameters but ignores both. Calibre-Web’s existing web handler separately checks `config_use_goodreads` before it calls any author provider, so that application setting must still be on for author pages to request profile data.
 
 This repository only provides the replacement Python module. It does not modify a Docker image or mount configuration.
 
