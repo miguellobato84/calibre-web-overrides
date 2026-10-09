@@ -53,6 +53,8 @@ def test_unique_exact_match_returns_template_fields(monkeypatch) -> None:
     assert author.image_url == "https://covers.openlibrary.org/a/id/456-M.jpg?default=false"
     assert author.safe_about == "A &lt;script&gt;alert(&#x27;x&#x27;)&lt;/script&gt; biography."
     assert author.books == []
+    assert author.birth_date == "1920-01-02"
+    assert author.death_date is None
     assert calls[0][1]["headers"]["User-Agent"].startswith("CalibreWebOpenLibraryAuthorProvider/")
     assert calls[0][1]["timeout"] > 0
 
@@ -65,16 +67,15 @@ def test_highest_work_count_search_result_wins(monkeypatch) -> None:
             {"key": "/authors/OL12A", "name": "Same Name Jr.", "work_count": 100},
         ]
     })
-    # Ranking applies to the search result set, as requested, not just exact
-    # spelling matches; the highest work count wins.
-    assert provider._find_author_id("Same Name") == "OL12A"
+    # Similar search hits are excluded; among exact names, highest work count wins.
+    assert provider._find_author_id("Same Name") == "OL11A"
 
 
 def test_tied_top_work_count_and_no_results_return_none(monkeypatch) -> None:
     monkeypatch.setattr(provider, "_get_json", lambda path, params=None: {
         "docs": [
             {"key": "/authors/OL10A", "name": "Same Name", "work_count": 9},
-            {"key": "/authors/OL11A", "name": "Same Name Jr.", "work_count": 9},
+            {"key": "/authors/OL11A", "name": "Same Name", "work_count": 9},
         ]
     })
     assert provider._find_author_id("Same Name") is None
@@ -89,9 +90,9 @@ def test_liu_cixin_matches_alternate_name_and_fetches_profile(monkeypatch) -> No
     def fake_get_json(path, params=None):
         paths.append(path)
         if path == "/search/authors.json":
-            assert params["fields"] == "key,name,work_count"
+            assert params["fields"] == "key,name,alternate_names,work_count"
             return {"docs": [
-                {"key": "OL7044246A", "name": "刘慈欣", "work_count": 123},
+                {"key": "OL7044246A", "name": "刘慈欣", "alternate_names": ["Liu Cixin"], "work_count": 123},
                 {"key": "OL11781896A", "name": "Conference", "work_count": 1},
                 {"key": "OL16029277A", "name": "Cixin Liu", "work_count": 7},
             ]}

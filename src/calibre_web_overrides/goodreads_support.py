@@ -42,6 +42,8 @@ class AuthorInfo:
     safe_about: str | None = None
     books: list[Any] = field(default_factory=list)
     gid: str | None = None
+    birth_date: str | None = None
+    death_date: str | None = None
     _timestamp: float = 0.0
 
 
@@ -84,11 +86,21 @@ def _author_id_from_key(key: Any) -> str | None:
 def _find_author_id(author_name: str) -> str | None:
     search = _get_json(
         "/search/authors.json",
-        {"q": author_name, "limit": 100, "fields": "key,name,work_count"},
+        {"q": author_name, "limit": 100, "fields": "key,name,alternate_names,work_count"},
     )
     candidates: dict[str, tuple[int, str]] = {}
+    normalized_query = _normalize_name(author_name)
     for item in search.get("docs", []):
         if not isinstance(item, dict):
+            continue
+        alternate_names = item.get("alternate_names") or []
+        if isinstance(alternate_names, str):
+            alternate_names = [alternate_names]
+        names = [item.get("name", ""), *alternate_names]
+        if not any(
+            isinstance(name, str) and _normalize_name(name) == normalized_query
+            for name in names
+        ):
             continue
         author_id = _author_id_from_key(item.get("key"))
         if not author_id:
@@ -101,7 +113,7 @@ def _find_author_id(author_name: str) -> str | None:
         candidates[author_id] = (max(work_count, candidates.get(author_id, (0, ""))[0]), display_name)
 
     if not candidates:
-        log.info("No Open Library author search results for %r", author_name)
+        log.info("No exact primary or alternate Open Library author match for %r", author_name)
         return None
 
     highest_work_count = max(work_count for work_count, _ in candidates.values())
@@ -111,7 +123,7 @@ def _find_author_id(author_name: str) -> str | None:
     )
     if len(leaders) != 1:
         log.warning(
-            "Tied highest-work-count Open Library author results for %r (%s works): %s",
+            "Tied highest-work-count exact-name Open Library author results for %r (%s works): %s",
             author_name,
             highest_work_count,
             ", ".join(leaders),
@@ -155,6 +167,8 @@ def _build_author(author_name: str, author_id: str, record: dict[str, Any]) -> A
         about=about,
         safe_about=safe_about,
         gid=author_id,
+        birth_date=record.get("birth_date") if isinstance(record.get("birth_date"), str) else None,
+        death_date=record.get("death_date") if isinstance(record.get("death_date"), str) else None,
         _timestamp=time.time(),
     )
 
@@ -167,7 +181,7 @@ def connect(key: str | None = None, enabled: bool = True) -> None:
 
 
 def get_author_info(author_name: str) -> AuthorInfo | None:
-    """Return exact-match author profile data, or None on misses/errors."""
+    """Return the highest-work-count Open Library author result, or None on misses/errors."""
     if not isinstance(author_name, str) or not author_name.strip():
         return None
 
