@@ -6,7 +6,7 @@ A drop-in replacement for Calibre-Web's `cps/services/goodreads_support.py` that
 
 ## Matching and data
 
-The provider requests Open Library author search results and accepts only one exact match after Unicode normalization and case folding. Missing and ambiguous matches return `None`; it does not choose the first search result. Liu Cixin uses the Open Library ID supplied for this library (`OL7044246A`), where the record is listed under the Chinese name. Biographies are escaped as text because Calibre-Web renders `safe_about` as trusted HTML. Photo URLs use Open Library's author covers endpoint when the record has a photo ID.
+The provider requests Open Library author search results and selects the result with the highest `work_count`. A tie for the highest count, or no results, returns `None`. This handles Liu Cixin, whose record is named `刘慈欣`; the search for “Liu Cixin” returns three results, and the correct record (`OL7044246A`) has the highest work count (123). Biographies are escaped as text because Calibre-Web renders `safe_about` as trusted HTML. Photo URLs use Open Library's author covers endpoint when the record has a photo ID.
 
 Requests identify this provider with a User-Agent, are throttled to at most one per second per Python process, have a timeout, and are cached in memory for 23 hours. A request/API failure returns `None` and is logged.
 

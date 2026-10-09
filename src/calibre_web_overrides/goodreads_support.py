@@ -24,10 +24,6 @@ REQUEST_TIMEOUT_SECONDS = 10
 CACHE_TIMEOUT_SECONDS = 23 * 60 * 60
 MIN_REQUEST_INTERVAL_SECONDS = 1.0
 
-# Open Library indexes Liu Cixin under his Chinese name. This exact ID was
-# supplied by the library owner and is fetched as an author record directly.
-AUTHOR_ID_OVERRIDES = {"Liu Cixin": "OL7044246A"}
-
 log = logging.getLogger(__name__)
 _cache: dict[str, tuple[float, AuthorInfo | None]] = {}
 _cache_lock = threading.RLock()
@@ -86,29 +82,49 @@ def _author_id_from_key(key: Any) -> str | None:
 
 
 def _find_author_id(author_name: str) -> str | None:
-    override = AUTHOR_ID_OVERRIDES.get(author_name)
-    if override:
-        return override
-
     search = _get_json(
         "/search/authors.json",
-        {"q": author_name, "limit": 100, "fields": "key,name"},
+        {"q": author_name, "limit": 100, "fields": "key,name,work_count"},
     )
-    by_id: dict[str, str] = {}
+    candidates: dict[str, tuple[int, str]] = {}
     for item in search.get("docs", []):
-        if not isinstance(item, dict) or _normalize_name(str(item.get("name", ""))) != _normalize_name(author_name):
+        if not isinstance(item, dict):
             continue
         author_id = _author_id_from_key(item.get("key"))
-        if author_id:
-            by_id[author_id] = str(item.get("name", ""))
+        if not author_id:
+            continue
+        try:
+            work_count = max(0, int(item.get("work_count", 0)))
+        except (TypeError, ValueError):
+            work_count = 0
+        display_name = str(item.get("name", ""))
+        candidates[author_id] = (max(work_count, candidates.get(author_id, (0, ""))[0]), display_name)
 
-    if len(by_id) != 1:
-        if len(by_id) > 1:
-            log.warning("Ambiguous exact Open Library author match for %r: %s", author_name, ", ".join(sorted(by_id)))
-        else:
-            log.info("No exact Open Library author match for %r", author_name)
+    if not candidates:
+        log.info("No Open Library author search results for %r", author_name)
         return None
-    return next(iter(by_id))
+
+    highest_work_count = max(work_count for work_count, _ in candidates.values())
+    leaders = sorted(
+        author_id for author_id, (work_count, _) in candidates.items()
+        if work_count == highest_work_count
+    )
+    if len(leaders) != 1:
+        log.warning(
+            "Tied highest-work-count Open Library author results for %r (%s works): %s",
+            author_name,
+            highest_work_count,
+            ", ".join(leaders),
+        )
+        return None
+    if len(candidates) > 1:
+        log.info(
+            "Selected Open Library author %s for %r with highest work count (%s)",
+            leaders[0],
+            author_name,
+            highest_work_count,
+        )
+    return leaders[0]
 
 
 def _plain_text(value: Any) -> str | None:

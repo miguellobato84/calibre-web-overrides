@@ -57,36 +57,53 @@ def test_unique_exact_match_returns_template_fields(monkeypatch) -> None:
     assert calls[0][1]["timeout"] > 0
 
 
-def test_ambiguous_and_missing_exact_matches_return_none(monkeypatch) -> None:
+def test_highest_work_count_search_result_wins(monkeypatch) -> None:
     monkeypatch.setattr(provider, "_get_json", lambda path, params=None: {
         "docs": [
-            {"key": "/authors/OL10A", "name": "Same Name"},
-            {"key": "/authors/OL11A", "name": "Same Name"},
-            {"key": "/authors/OL12A", "name": "Same Name Jr."},
+            {"key": "/authors/OL10A", "name": "Same Name", "work_count": 4},
+            {"key": "/authors/OL11A", "name": "Same Name", "work_count": 9},
+            {"key": "/authors/OL12A", "name": "Same Name Jr.", "work_count": 100},
         ]
     })
-    assert provider.get_author_info("Same Name") is None
-
-    monkeypatch.setattr(provider, "_get_json", lambda path, params=None: {"docs": [
-        {"key": "/authors/OL12A", "name": "Similar Name"},
-    ]})
-    assert provider.get_author_info("Same Name") is None
+    # Ranking applies to the search result set, as requested, not just exact
+    # spelling matches; the highest work count wins.
+    assert provider._find_author_id("Same Name") == "OL12A"
 
 
-def test_liu_cixin_uses_owner_supplied_record_id(monkeypatch) -> None:
+def test_tied_top_work_count_and_no_results_return_none(monkeypatch) -> None:
+    monkeypatch.setattr(provider, "_get_json", lambda path, params=None: {
+        "docs": [
+            {"key": "/authors/OL10A", "name": "Same Name", "work_count": 9},
+            {"key": "/authors/OL11A", "name": "Same Name Jr.", "work_count": 9},
+        ]
+    })
+    assert provider._find_author_id("Same Name") is None
+
+    monkeypatch.setattr(provider, "_get_json", lambda path, params=None: {"docs": []})
+    assert provider._find_author_id("Same Name") is None
+
+
+def test_liu_cixin_matches_alternate_name_and_fetches_profile(monkeypatch) -> None:
     paths = []
 
     def fake_get_json(path, params=None):
         paths.append(path)
-        return {"name": "刘慈欣", "bio": "Chinese science fiction writer", "photos": []}
+        if path == "/search/authors.json":
+            assert params["fields"] == "key,name,work_count"
+            return {"docs": [
+                {"key": "OL7044246A", "name": "刘慈欣", "work_count": 123},
+                {"key": "OL11781896A", "name": "Conference", "work_count": 1},
+                {"key": "OL16029277A", "name": "Cixin Liu", "work_count": 7},
+            ]}
+        return {"name": "刘慈欣", "bio": "Chinese science fiction writer", "photos": [10246623]}
 
     monkeypatch.setattr(provider, "_get_json", fake_get_json)
     author = provider.get_author_info("Liu Cixin")
-    assert paths == ["/authors/OL7044246A.json"]
+    assert paths == ["/search/authors.json", "/authors/OL7044246A.json"]
     assert author is not None
     assert author.name == "Liu Cixin"
     assert author.link == "https://openlibrary.org/authors/OL7044246A"
-    assert author.image_url is None
+    assert author.image_url == "https://covers.openlibrary.org/a/id/10246623-M.jpg?default=false"
 
 
 def test_provider_ignores_legacy_key_and_enabled_arguments(monkeypatch) -> None:
