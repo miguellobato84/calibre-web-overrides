@@ -6,7 +6,7 @@ This module intentionally keeps the public interface of Calibre-Web's
 
 from __future__ import annotations
 
-import html
+import base64
 import logging
 import re
 import threading
@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote
 
+import markdown2
+import nh3
 import requests
 
 API_ROOT = "https://openlibrary.org"
@@ -23,6 +25,12 @@ USER_AGENT = "CalibreWebOpenLibraryAuthorProvider/0.1 (+https://github.com/migue
 REQUEST_TIMEOUT_SECONDS = 10
 CACHE_TIMEOUT_SECONDS = 23 * 60 * 60
 MIN_REQUEST_INTERVAL_SECONDS = 1.0
+MAX_INLINE_PHOTO_BYTES = 512 * 1024
+
+BIO_ALLOWED_TAGS = set(nh3.ALLOWED_TAGS) | {
+    "p", "span", "div", "pre", "br", "h1", "h2", "h3", "h4", "h5", "h6", "code"
+}
+BIO_ALLOWED_ATTRIBUTES = {"a": {"href", "title"}}
 
 log = logging.getLogger(__name__)
 _cache: dict[str, tuple[float, AuthorInfo | None]] = {}
@@ -139,27 +147,62 @@ def _find_author_id(author_name: str) -> str | None:
     return leaders[0]
 
 
-def _plain_text(value: Any) -> str | None:
+def _format_about(value: Any) -> str | None:
     if isinstance(value, dict):
         value = value.get("value")
     if not isinstance(value, str) or not value.strip():
         return None
-    # The template marks safe_about as safe HTML. Escape API text before it is
-    # passed through that filter; Open Library biographies are often Markdown.
-    return html.escape(" ".join(value.split()), quote=True)
+
+    rendered = markdown2.markdown(value).strip()
+    # The Calibre-Web author template wraps safe_about in a paragraph. Flatten
+    # Markdown paragraph wrappers while keeping paragraph breaks readable.
+    rendered = re.sub(r"</p>\s*<p>", "<br><br>", rendered, flags=re.IGNORECASE)
+    rendered = re.sub(r"</?p>", "", rendered, flags=re.IGNORECASE)
+    cleaned = nh3.clean(
+        rendered,
+        tags=BIO_ALLOWED_TAGS,
+        attributes=BIO_ALLOWED_ATTRIBUTES,
+        url_schemes={"http", "https", "mailto"},
+        link_rel="noopener noreferrer",
+    )
+    return cleaned.strip() or None
+
+
+def _fetch_photo_data_url(photo_id: int) -> str | None:
+    url = f"https://covers.openlibrary.org/a/id/{photo_id}-M.jpg?default=false"
+    try:
+        _throttle()
+        response = requests.get(
+            url,
+            headers={"User-Agent": USER_AGENT, "Accept": "image/*"},
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        if not content_type.startswith("image/"):
+            log.warning("Open Library photo %s returned non-image content", photo_id)
+            return None
+        if len(response.content) > MAX_INLINE_PHOTO_BYTES:
+            log.warning("Open Library photo %s is too large to inline", photo_id)
+            return None
+        encoded = base64.b64encode(response.content).decode("ascii")
+        return f"data:{content_type};base64,{encoded}"
+    except requests.RequestException as exc:
+        log.info("Open Library photo lookup failed for %s: %s", photo_id, exc)
+        return None
 
 
 def _build_author(author_name: str, author_id: str, record: dict[str, Any]) -> AuthorInfo:
     profile = f"{API_ROOT}/authors/{quote(author_id, safe='')}"
     photos = record.get("photos") or []
     photo_id = next((photo for photo in photos if isinstance(photo, int) and photo > 0), None)
-    image_url = f"https://covers.openlibrary.org/a/id/{photo_id}-M.jpg?default=false" if photo_id else None
+    image_url = _fetch_photo_data_url(photo_id) if photo_id else None
     about = record.get("bio")
     if isinstance(about, dict):
         about = about.get("value")
     if not isinstance(about, str):
         about = None
-    safe_about = _plain_text(about)
+    safe_about = _format_about(about)
     return AuthorInfo(
         name=author_name,
         image_url=image_url,

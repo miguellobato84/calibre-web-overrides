@@ -36,9 +36,15 @@ def test_unique_exact_match_returns_template_fields(monkeypatch) -> None:
         calls.append((url, kwargs))
         if url.endswith("/search/authors.json"):
             return response({"docs": [{"key": "/authors/OL123A", "name": "Isaac Asimov"}]})
+        if url.startswith("https://covers.openlibrary.org/"):
+            image = requests.Response()
+            image.status_code = 200
+            image._content = b"test-image"
+            image.headers["Content-Type"] = "image/jpeg"
+            return image
         return response({
             "name": "Isaac Asimov",
-            "bio": {"value": "A <script>alert('x')</script> biography."},
+            "bio": {"value": "A **bold** <script>alert('x')</script> [source](https://example.com)"},
             "photos": [456],
             "birth_date": "1920-01-02",
         })
@@ -50,8 +56,10 @@ def test_unique_exact_match_returns_template_fields(monkeypatch) -> None:
     assert author.name == "Isaac Asimov"
     assert author.link == "https://openlibrary.org/authors/OL123A"
     assert author.gid == "OL123A"
-    assert author.image_url == "https://covers.openlibrary.org/a/id/456-M.jpg?default=false"
-    assert author.safe_about == "A &lt;script&gt;alert(&#x27;x&#x27;)&lt;/script&gt; biography."
+    assert author.image_url == "data:image/jpeg;base64,dGVzdC1pbWFnZQ=="
+    assert "<strong>bold</strong>" in author.safe_about
+    assert "<script>" not in author.safe_about
+    assert '<a href="https://example.com"' in author.safe_about
     assert author.books == []
     assert author.birth_date == "1920-01-02"
     assert author.death_date is None
@@ -99,12 +107,14 @@ def test_liu_cixin_matches_alternate_name_and_fetches_profile(monkeypatch) -> No
         return {"name": "刘慈欣", "bio": "Chinese science fiction writer", "photos": [10246623]}
 
     monkeypatch.setattr(provider, "_get_json", fake_get_json)
+    monkeypatch.setattr(provider, "_fetch_photo_data_url", lambda photo_id: None)
     author = provider.get_author_info("Liu Cixin")
     assert paths == ["/search/authors.json", "/authors/OL7044246A.json"]
     assert author is not None
     assert author.name == "Liu Cixin"
     assert author.link == "https://openlibrary.org/authors/OL7044246A"
-    assert author.image_url == "https://covers.openlibrary.org/a/id/10246623-M.jpg?default=false"
+    # This test focuses on matching; the photo request is stubbed as unavailable.
+    assert author.image_url is None
 
 
 def test_provider_ignores_legacy_key_and_enabled_arguments(monkeypatch) -> None:
